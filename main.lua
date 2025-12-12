@@ -35,8 +35,17 @@ function love.load()
     landedNumber = nil -- The number where the ball lands
     landedColor = nil -- The number where the ball lands
 
+    -- Game state
+    isGameOver = false
+    showHistory = false
+    comment = ""
+    
+    -- Game history
+    gameHistory = {}
+    
     -- Button properties
 	buttons = {"CLEAR", "DOUBLE", "ALL", "SPIN"}
+	playAgainButton = {"PLAY AGAIN"}
 	
 	colors = {
 		black={0.109804, 0.109804, 0.109804},
@@ -47,12 +56,18 @@ function love.load()
 		ball={0.996078, 1.000000, 0.172549},
 		green={0.149020, 0.796078, 0.129412},
 		red={1.000000, 0.172549, 0.172549},
+        panelBg={0.109804, 0.109804, 0.109804, 0.95},
+        historyBg={0.070588, 0.070588, 0.070588, 0.9},
+        historyHeader={1.000000, 1.000000, 1.000000, 0.8},
+        historyRowEven={1.000000, 1.000000, 1.000000, 0.05},
+        historyRowOdd={1.000000, 1.000000, 1.000000, 0.1}
 	}
 	
 	love.graphics.setBackgroundColor(colors.black)
 	mainFont = love.graphics.newFont("font/IBMPlexSans-Bold.ttf")
 	midFont = love.graphics.newFont("font/IBMPlexSans-Bold.ttf", 14)
 	smallFont = love.graphics.newFont("font/IBMPlexSans-Bold.ttf", 10)
+    historyFont = love.graphics.newFont("font/IBMPlexSans-Bold.ttf", 12)
 
     -- Define roulette sections
     rouletteSections = {
@@ -116,11 +131,12 @@ function love.load()
 	rouletteZero="0"
 	bettingScales = {10, 50, 100, 500, 1000, 5000, 10000, 50000, 1000000, 5000000, 10000000, 50000000}
 
-
     tickSound = love.audio.newSource("audio/tick.wav", "static")  
     tickSound:setVolume(0.7)
 	woohSound = love.audio.newSource("audio/wooh.wav", "static")
     woohSound:setVolume(1)
+	cashSound = love.audio.newSource("audio/cash.wav", "static")
+    cashSound:setVolume(1)
 end
 
 function love.resize(w, h)
@@ -150,6 +166,8 @@ function love.update(dt)
         if landedNumber then checkBets(landedNumber, landedColor) end
 		if lastWon < 0 then
 			love.audio.play(woohSound)
+		elseif lastWon > 0 then
+			love.audio.play(cashSound)
 		end
     end
 end
@@ -169,14 +187,25 @@ function love.draw()
     drawBettingGrid()
 	
     -- Draw buttons
-    for i, label in ipairs(buttons) do
-		local x = gridX + (i-1)*gridCellSize*2.4
-		local y = gridY + gridCellSize*7
-		love.graphics.setColor(colors.trans)
-		love.graphics.rectangle("fill", x, y, gridCellSize*2, gridCellSize)
-		love.graphics.setColor(colors.white)
-		love.graphics.printf(label, x, y + gridCellSize/4, gridCellSize*2, "center")
-	end
+    if isGameOver then
+        -- Draw Play Again button
+        local x = gridX
+        local y = gridY + gridCellSize*7
+        love.graphics.setColor(colors.white)
+        love.graphics.rectangle("fill", x, y, gridCellSize*4, gridCellSize)
+        love.graphics.setColor(colors.black)
+        love.graphics.printf("PLAY AGAIN", x, y + gridCellSize/4, gridCellSize*4, "center")
+    else
+        -- Draw normal buttons
+        for i, label in ipairs(buttons) do
+            local x = gridX + (i-1)*gridCellSize*2.4
+            local y = gridY + gridCellSize*7
+            love.graphics.setColor(colors.trans)
+            love.graphics.rectangle("fill", x, y, gridCellSize*2, gridCellSize)
+            love.graphics.setColor(colors.white)
+            love.graphics.printf(label, x, y + gridCellSize/4, gridCellSize*2, "center")
+        end
+    end
     
 	-- Draw bettingScales
     for i, val in ipairs(bettingScales) do
@@ -222,7 +251,24 @@ function love.draw()
 		label = "$0"
 	end
     love.graphics.print(label, 18 + tw, 14)
-
+    
+    -- Draw comment
+    if comment ~= "" then
+        love.graphics.setColor(colors.white)
+        local commentWidth = love.graphics.getFont():getWidth(comment)
+        love.graphics.print(comment, gridX + gridCellSize*6 - commentWidth/2, gridY - gridCellSize)
+    end
+	
+	-- Draw History button
+    love.graphics.setColor(colors.white)
+    love.graphics.circle("line", windowWidth - 30, 30, 15)
+    love.graphics.setFont(smallFont)
+    love.graphics.print("H", windowWidth - 30 - smallFont:getWidth("H")/2, 30 - smallFont:getHeight()/2)
+    
+    -- Draw history panel if shown
+    if showHistory then
+        drawHistoryPanel()
+    end
 	
 end
 
@@ -422,12 +468,57 @@ end
 
 function love.mousepressed(x, y, button)
     if button == 1 then
-		handleButtonClick(x, y)
-        handleGridClick(x, y)
+        -- Check if history panel is open
+        if showHistory then
+            -- Check if close button is clicked
+            local panelWidth = windowWidth * 0.8
+            local panelHeight = windowHeight * 0.7
+            local panelX = (windowWidth - panelWidth) / 2
+            local panelY = (windowHeight - panelHeight) / 2
+            
+            local closeBtnSize = 20
+            local closeBtnX = panelX + panelWidth - closeBtnSize - 10
+            local closeBtnY = panelY + 10
+            
+            local dx = x - closeBtnX
+            local dy = y - closeBtnY
+            if dx*dx + dy*dy <= (closeBtnSize/2)*(closeBtnSize/2) then
+                showHistory = false
+                return
+            end
+            
+            -- Don't process other clicks when history panel is open
+            return
+        end
+        
+        -- Check history button
+        local dx = x - (windowWidth - 30)
+        local dy = y - 30
+        if dx*dx + dy*dy <= 15*15 then
+            showHistory = not showHistory
+            return
+        end
+        
+        if isGameOver then
+            -- Check Play Again button
+            local btnX = gridX
+            local btnY = gridY + gridCellSize*7
+            local btnWidth = gridCellSize*4
+            local btnHeight = gridCellSize
+            
+            if x >= btnX and x <= btnX + btnWidth and y >= btnY and y <= btnY + btnHeight then
+                resetGame()
+            end
+        else
+            handleButtonClick(x, y)
+            handleGridClick(x, y)
+        end
     end
 end
 
 function handleButtonClick(x, y)
+    if isGameOver then return end
+    
 	for i, label in ipairs(buttons) do
 		local a = gridX + (i-1)*gridCellSize*2.4
 		local b = gridY + gridCellSize*7
@@ -451,7 +542,6 @@ function handleButtonClick(x, y)
 				landedNumber = nil
 				landedColor = nil
 			end
-			-- love.audio.play(tickSound)
 		end
 	end
 	
@@ -466,6 +556,8 @@ function handleButtonClick(x, y)
 end
 
 function handleGridClick(x, y)
+    if isGameOver then return end
+    
 	-- Handle clicks for rouletteZero
 	if x >= gridX - gridCellSize and x <= gridX and y >= gridY and y <= (gridY + gridCellSize*3) then
 		local number = 0
@@ -560,6 +652,171 @@ function handleGridClick(x, y)
     end
 end
 
+function drawHistoryPanel()
+    local panelWidth = windowWidth * 0.8
+    local panelHeight = windowHeight * 0.7
+    local panelX = (windowWidth - panelWidth) / 2
+    local panelY = (windowHeight - panelHeight) / 2
+    
+    -- Draw background
+    love.graphics.setColor(colors.historyBg)
+    love.graphics.rectangle("fill", panelX, panelY, panelWidth, panelHeight)
+    
+    -- Draw border
+    love.graphics.setColor(colors.white)
+    love.graphics.rectangle("line", panelX, panelY, panelWidth, panelHeight)
+    
+    -- Draw title
+    love.graphics.setColor(colors.historyHeader)
+    love.graphics.setFont(midFont)
+    local title = "Game History"
+    local titleWidth = love.graphics.getFont():getWidth(title)
+    love.graphics.print(title, panelX + panelWidth/2 - titleWidth/2, panelY + 10)
+    
+    -- Draw close button
+    local closeBtnSize = 20
+    local closeBtnX = panelX + panelWidth - closeBtnSize - 10
+    local closeBtnY = panelY + 10
+    love.graphics.setColor(colors.red)
+    love.graphics.circle("line", closeBtnX, closeBtnY, closeBtnSize/2)
+    love.graphics.setColor(colors.white)
+    love.graphics.print("x", closeBtnX - smallFont:getWidth("x")/2, closeBtnY - smallFont:getHeight()/2 - closeBtnSize/4)
+    
+    -- Draw column headers
+    love.graphics.setFont(historyFont)
+    local columnWidth = panelWidth / 5
+    local headers = {"Time", "Bet", "Result", "Won", "Balance"}
+    for i, header in ipairs(headers) do
+        love.graphics.setColor(colors.white)
+        love.graphics.print(header, panelX + (i-1)*columnWidth + 10, panelY + 50)
+    end
+    
+    -- Draw history entries
+    local startY = panelY + 80
+    for i, entry in ipairs(gameHistory) do
+        local y = startY + (i-1) * 30
+        
+        -- Alternate row colors
+        if i % 2 == 0 then
+            love.graphics.setColor(colors.historyRowEven)
+        else
+            love.graphics.setColor(colors.historyRowOdd)
+        end
+        love.graphics.rectangle("fill", panelX, y - 5, panelWidth, 25)
+        
+        love.graphics.setFont(historyFont)
+        
+        -- Time
+        love.graphics.setColor(colors.white)
+        love.graphics.print(entry.time, panelX + 10, y)
+        
+        -- Bet
+        love.graphics.setColor(colors.white)
+        love.graphics.print("$" .. format_num_comma(entry.bet), panelX + columnWidth, y)
+        
+        -- Result
+        love.graphics.setColor(colors.white)
+        love.graphics.print(entry.number .. " " .. entry.color, panelX + 2*columnWidth, y)
+        
+        -- Won
+        local wonText
+        if entry.won > 0 then
+            wonText = "+$" .. format_num_comma(entry.won)
+            love.graphics.setColor(colors.green)
+        elseif entry.won < 0 then
+            wonText = "-$" .. format_num_comma(math.abs(entry.won))
+            love.graphics.setColor(colors.red)
+        else
+            wonText = "$0"
+            love.graphics.setColor(colors.white)
+        end
+        love.graphics.print(wonText, panelX + 3*columnWidth, y)
+        
+        -- Balance change
+        local balanceText
+        if entry.balanceChange > 0 then
+            balanceText = "+$" .. format_num_comma(entry.balanceChange)
+            love.graphics.setColor(colors.green)
+        elseif entry.balanceChange < 0 then
+            balanceText = "-$" .. format_num_comma(math.abs(entry.balanceChange))
+            love.graphics.setColor(colors.red)
+        else
+            balanceText = "$0"
+            love.graphics.setColor(colors.white)
+        end
+        love.graphics.print(balanceText, panelX + 4*columnWidth, y)
+    end
+    
+    -- Draw "No games played yet" message if history is empty
+    if #gameHistory == 0 then
+        love.graphics.setColor(colors.white)
+        local msg = "No games played yet"
+        local msgWidth = love.graphics.getFont():getWidth(msg)
+        love.graphics.print(msg, panelX + panelWidth/2 - msgWidth/2, panelY + panelHeight/2)
+    end
+    
+    -- Draw summary at bottom
+    if #gameHistory > 0 then
+        local totalWon = 0
+        local totalLost = 0
+        local wins = 0
+        local losses = 0
+        
+        for _, entry in ipairs(gameHistory) do
+            if entry.won > 0 then
+                totalWon = totalWon + entry.won
+                wins = wins + 1
+            elseif entry.won < 0 then
+                totalLost = totalLost + math.abs(entry.won)
+                losses = losses + 1
+            end
+        end
+        
+        local summaryY = panelY + panelHeight - 30
+        local totalGames = wins + losses
+        local winRate = totalGames > 0 and ((wins / totalGames) * 100) or 0
+        
+        local summaryText = string.format("Games: %d | Wins: %d (%.0f%%) | Profit: $%s", 
+            totalGames, wins, winRate, format_num_comma(totalWon - totalLost))
+        
+        love.graphics.setColor(colors.white)
+        love.graphics.setFont(smallFont)
+        local summaryWidth = love.graphics.getFont():getWidth(summaryText)
+        love.graphics.print(summaryText, panelX + panelWidth/2 - summaryWidth/2, summaryY)
+    end
+end
+
+function addToHistory(betAmount, resultNumber, resultColor, wonAmount, balanceChange)
+    local historyEntry = {
+        time = os.date("%H:%M:%S"),
+        bet = betAmount,
+        number = resultNumber,
+        color = resultColor,
+        won = wonAmount,
+        balanceChange = balanceChange,
+        finalBalance = balance
+    }
+    
+    table.insert(gameHistory, historyEntry)
+    
+    -- Keep only last 100 games
+    if #gameHistory > 100 then
+        table.remove(gameHistory, 1)
+    end
+end
+
+function resetGame()
+    balance = defaultBet
+    prevBalance = balance
+    lastWon = 0
+    bets = {}
+    landedNumber = nil
+    landedColor = nil
+    isGameOver = false
+    comment = ""
+    chipValue = 10
+end
+
 
 function format_num(num)
     if num < 1000 then
@@ -578,8 +835,6 @@ function format_num(num)
 
     return "∞"
 end
-
-
 
 -- Function to format numbers with commas
 function format_num_comma(n)
@@ -601,7 +856,14 @@ end
 
 
 function checkBets(num, col)
-	
+    -- Calculate total bet before spin
+    local totalBetBefore = 0
+    for _, bet in pairs(bets) do
+        totalBetBefore = totalBetBefore + bet
+    end
+    
+    local pointsBefore = balance
+    
 	if bets[num] and (num >= 0 and num <= 36) then
 		balance = balance + bets[num] * 36
 	end
@@ -641,10 +903,35 @@ function checkBets(num, col)
 	end
 	
 	lastWon = balance - prevBalance
-	if lastWon < 0 then
+    
+    -- Calculate winnings/losses for history
+    local wonAmount = 0
+    local balanceChange = balance - pointsBefore
+    
+    if balanceChange > 0 then
+        wonAmount = balanceChange
+    else
+        wonAmount = -totalBetBefore
+    end
+    
+    -- Add to history
+    addToHistory(totalBetBefore, num, col, wonAmount, balanceChange)
+    
+    if lastWon < 0 then
         showGlitch = true
         love.audio.play(woohSound) -- Losing sound effect
     end
+    
+    -- Check for game over
+    if balance == 0 then
+        comment = "Woooh! You lost all of your chips, didn't you?"
+        isGameOver = true
+    elseif balance >= 1000000000 then
+        comment = "Damn! You've become a billionaire!"
+    elseif balance < 1000000000 then
+        comment = ""
+    end
+    
 	prevBalance = balance
 	bets = {}
 end
